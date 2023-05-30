@@ -142,9 +142,10 @@ def main(args):
                 beam_outputs = [tokenizer.decode(x, skip_special_tokens=True).lower().replace('"', '') 
                                 for x in generated_ids]
 
-            # print(f"Prompt: {prompt}")
-            # print(f"Alternatives: {[source_word] + alternatives}")
-            # print(f"Beam outputs: {beam_outputs}\n")
+            if args.verbose > 1:
+                print(f"Prompt: {prompt}")
+                print(f"Alternatives: {[source_word] + alternatives}")
+                print(f"Beam outputs: {beam_outputs}\n")
 
 
             # Store outputs and targets
