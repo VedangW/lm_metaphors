@@ -1,0 +1,16 @@
+name: lm-meta
+channels:
+  - conda-forge
+  - defaults
+  - anaconda
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - transformers
+  - sentence-transformers
+  - tqdm
+  - pip
+  - pip:
+    - --index-url https://download.pytorch.org/whl/cu118
+    - torch
