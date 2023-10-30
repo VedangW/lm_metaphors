@@ -1,4 +1,4 @@
-MODEL='gpt2'
+MODEL='microsoft/DialoGPT-medium'
 
 python query_model.py \
     --model ${MODEL} \
