@@ -1,4 +1,4 @@
-MODEL='gpt2'
+MODEL='google/t5-xl-lm-adapt'
 
 python few_shot.py \
     --model ${MODEL} \

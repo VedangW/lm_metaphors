@@ -3,11 +3,15 @@ import torch
 import string
 import argparse
 import warnings
+import pandas as pd
 from time import time
 from tqdm import tqdm
+from tabulate import tabulate
 from transformers import AutoModelForCausalLM, AutoTokenizer, \
-        AutoModelForSeq2SeqLM, BertLMHeadModel, pipeline, set_seed
+        AutoModelForSeq2SeqLM, pipeline, set_seed
 from sentence_transformers import SentenceTransformer, util
+
+from prompt_structures import ALL_PROMPTS
 
 def get_args():
     """ Get arguments from command line. """
@@ -29,6 +33,8 @@ def get_args():
                         help='Number of beams to use for beam search')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', 
                         help='Device to run the model on')
+    parser.add_argument('--match_type', type=str, default='exact', choices=['exact', 'fuzzy'],
+                        help='Type of matching to use for evaluation')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--verbose', type=int, default=1, choices=[0, 1, 2], help='Verbosity level')
     args = parser.parse_args()
@@ -37,7 +43,11 @@ def get_args():
 
 
 def prompt_from_3tuple(target, source, target_word):
-    return f"If '{target}' is like '{source}', then '{target_word}' is like "
+    return f"If {target} is like {source}, then {target_word} is like"
+
+
+def prompt_from_prompt_structure(ps, target, source, target_word):
+    return ps.replace('_t_', target).replace('_s_', source).replace('_tw_', target_word)
 
 
 def baseline(target_word, source_word, source):
@@ -54,23 +64,21 @@ def pad_outputs(beam_outputs, num_beams=10):
 
 def remove_punctuation(text):
     """ Remove punctuation from text. """
-    return text.translate(string.maketrans('', '', string.punctuation))
+    return text.translate(str.maketrans('', '', string.punctuation))
 
 
 class Evaluator:
-    def __init__(self, model_name, num_beams=10, sent_trans_model='all-MiniLM-L6-v2', match_threshold=0.8):
+    def __init__(self, model_name, num_beams=10, sent_trans_model='all-MiniLM-L6-v2', 
+                 match_type='exact', match_threshold=0.8):
         self.model_name = model_name
         self.num_beams = num_beams
         self.sent_trans_model = sent_trans_model
         self.match_threshold = match_threshold
+        self.match_type = match_type
 
-        self.match_type = 'fuzzy' if 'dialogpt' in model_name.lower() else 'exact'
-
-        if 'dialogpt' in model_name.lower():
-            self.match_type == 'fuzzy'
+        if self.match_type == 'fuzzy':
             self.match_model = SentenceTransformer(sent_trans_model)
         else:
-            self.match_type = 'exact'
             self.match_model = None
 
         self.match_fn = self._fuzzy_match if self.match_type == 'fuzzy' else self._exact_match
@@ -85,7 +93,6 @@ class Evaluator:
     
     def _mean_reciprocal_rank(self, rank_list):
         """ Compute mean reciprocal rank of the rank list. """
-
         return sum([1 / x for x in rank_list]) / len(rank_list)
 
     def get_rank(self, beam_outputs, targets):
@@ -157,7 +164,7 @@ def generate_beam_outputs(args, prompt, target, target_word, source, model_dict)
                         for x in beam_outputs]
     else:
         # Encode prompt
-        if 'dialogpt' in args.model.lower():
+        if 'dialogpt' in args.model.lower() or 'gpt-neo' in args.model.lower():
             input_ids = model_dict['tokenizer'].encode(
                     model_dict['tokenizer'].eos_token + prompt, return_tensors='pt'
                 ).to(args.device)
@@ -181,6 +188,14 @@ def generate_beam_outputs(args, prompt, target, target_word, source, model_dict)
     return beam_outputs
 
 
+def save_outputs(args, prompts, outputs, targets):
+    """ Save outputs to file. """
+
+    with open("data/scan_" + remove_punctuation(args.model) + "_outputs.txt", "w") as f:
+        for i in tqdm(range(len(prompts))):
+            f.write(prompts[i] + "\n" + str(outputs[i]) + "\n" + str(targets[i]) + "\n\n")
+            
+
 def main(args):
     """ Main function. """
     set_seed(args.seed)
@@ -193,43 +208,63 @@ def main(args):
     model_dict = load_model_and_tokenizer(args.model, args.device)
 
     if args.verbose > 0:
-        print(f"Loaded model {args.model} in {round(time() - t0, 3)} seconds to device '{args.device}'.")
-        print(f"Prompt: {prompt_from_3tuple('target', 'source', 'target_word')}")
+        print(f"Loaded model {args.model} in {round(time() - t0, 3)} seconds to device '{args.device}'.\n")
+        
+    n_prompts = len(ALL_PROMPTS)
+    all_metrics = []
 
-    outputs, targets = [], []
+    for i, prompt_structure in enumerate(ALL_PROMPTS):
+        t1 = time()
+        if args.verbose > 0:
+            print(f"Prompt [{i+1} of {n_prompts}]: {prompt_from_prompt_structure(prompt_structure, 'target', 'source', 'target_word')}")
 
-    # Read data
-    with open('data/scan.csv', newline='') as f:
-        reader = csv.reader(f, delimiter=',', quotechar='/')
-        for i, row in enumerate(tqdm(reader)):
-            # Skip header
-            if i == 0: continue
+        prompts, outputs, targets = [], [], []
 
-            target, source, target_word, source_word = row[:4]
-            prompt = prompt_from_3tuple(target, source, target_word)
+        # Read data
+        with open('data/scan.csv', newline='') as f:
+            reader = csv.reader(f, delimiter=',', quotechar='/')
+            for i, row in enumerate(tqdm(reader)):
+                # Skip header
+                if i == 0: continue
 
-            # Process alternatives
-            alternatives = row[4:-1]
-            alternatives = [x.strip().replace('"', '') for x in alternatives if x.strip() != '']
+                target, source, target_word, source_word = row[:4]
+                prompt = prompt_from_prompt_structure(prompt_structure, target, source, target_word)
 
-            # Generate beam outputs
-            beam_outputs = generate_beam_outputs(args, prompt, target, target_word, source, model_dict)
+                # Process alternatives
+                alternatives = row[4:-1]
+                alternatives = [x.strip().replace('"', '') for x in alternatives if x.strip() != '']
 
-            if args.verbose > 1:
-                print(f"Prompt: {prompt}")
-                print(f"Alternatives: {[source_word] + alternatives}")
-                print(f"Beam outputs: {beam_outputs}\n")
+                # Generate beam outputs
+                beam_outputs = generate_beam_outputs(args, prompt, target, target_word, source, model_dict)
 
-            # Store outputs and targets
-            outputs.append(pad_outputs(beam_outputs, num_beams=args.num_beams))
-            targets.append([source_word] + alternatives)
+                if args.verbose > 1:
+                    print(f"Prompt: {prompt}")
+                    print(f"Alternatives: {[source_word] + alternatives}")
+                    print(f"Beam outputs: {beam_outputs}\n")
 
-    evaluator = Evaluator(args.model, num_beams=args.num_beams)
-    metrics = evaluator.calc_metrics(outputs, targets)
+                # Store outputs and targets
+                prompts.append(prompt)
+                outputs.append(pad_outputs(beam_outputs, num_beams=args.num_beams))
+                targets.append([source_word] + alternatives)
+
+        save_outputs(args, prompts, outputs, targets)
+
+        evaluator = Evaluator(args.model, num_beams=args.num_beams, match_type=args.match_type)
+        metrics = evaluator.calc_metrics(outputs, targets)
+        all_metrics.append(
+            [prompt_from_prompt_structure(prompt_structure, 'target', 'source', 'target_word')] \
+            + list(metrics.values())
+        )
+
+        if args.verbose > 0:
+            print("Metrics: {}".format(args.model, metrics))
+            print(f"Finished in {round(time() - t1, 3)} seconds.\n")
+
+    df_metrics = pd.DataFrame(all_metrics, columns=['prompt', 'mrr', 'acc'])
 
     if args.verbose > 0:
-        print("Model: {}, Metrics: {}".format(args.model, metrics))
-        print(f"Finished in {round(time() - t0, 3)} seconds")
+        print(f"Evaluated model {args.model}. Finished in {round(time() - t0, 3)} seconds.")
+        print(tabulate(df_metrics, headers = 'keys', tablefmt = 'psql'))
 
 
 if __name__ == '__main__':

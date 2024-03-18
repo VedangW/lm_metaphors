@@ -1,0 +1,20 @@
+ALL_PROMPTS = [
+    "Consider the analogy: if '_t_' is like '_s_', then '_tw_' is like what? Answer in one word.",
+    "Consider the analogy: if '_t_' is like '_s_', then '_tw_' is like what?",
+    "Consider the analogy: if '_t_' is like '_s_', then '_tw_' is like ",
+    "If '_t_' is like '_s_', then '_tw_' is like ",
+    "Complete the analogy: If '_t_' is like '_s_', then '_tw_' is like ",
+    "Complete the simile: if '_t_' is like '_s_', then '_tw_' is like",
+    "Complete the metaphor: if '_t_' is like '_s_', then '_tw_' is like",
+    "Complete the comparison: if '_t_' is like '_s_', then '_tw_' is like",
+    "If '_t_' is to '_s_', then '_tw_' is to",
+    "If '_t_' equals '_s_', then '_tw_' equals",
+    "If '_t_' = '_s_', then '_tw_' =",
+    "If _t_ is to _s_, then _tw_ is to",
+    "If _t_ is like _s_, then _tw_ is like",
+    "_t_ is like _s_. _tw_ is like",
+    "If _t_: _s_ then _tw_: ",
+    "_t_: _s_. _tw_: ",
+    "_t_: _s_, _tw_: ",
+    "_t_ is like _s_, _tw_ is like"
+]
